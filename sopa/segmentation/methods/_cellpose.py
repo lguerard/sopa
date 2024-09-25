@@ -14,9 +14,9 @@ from .. import StainingSegmentation, shapes
 def cellpose_patch(
     diameter: float,
     channels: list[str],
-    model_type: str = "cyto3",
+    model_type: str,
+    cellpose_model_kwargs: dict,
     pretrained_model: str | bool = False,
-    cellpose_model_kwargs: dict | None = None,
     **cellpose_eval_kwargs: int,
 ) -> Callable:
     """Creation of a callable that runs Cellpose segmentation on a patch
@@ -42,7 +42,9 @@ def cellpose_patch(
     cellpose_model_kwargs = cellpose_model_kwargs or {}
 
     if pretrained_model:
-        model = models.CellposeModel(pretrained_model=pretrained_model, **cellpose_model_kwargs)
+        model = models.CellposeModel(
+            pretrained_model=pretrained_model, **cellpose_model_kwargs
+        )
     else:
         model = models.Cellpose(model_type=model_type, **cellpose_model_kwargs)
 
@@ -54,7 +56,9 @@ def cellpose_patch(
         raise ValueError(f"Provide 1 or 2 channels. Found {len(channels)}")
 
     def _(patch: np.ndarray):
-        mask, *_ = model.eval(patch, diameter=diameter, channels=channels, **cellpose_eval_kwargs)
+        mask, *_ = model.eval(
+            patch, diameter=diameter, channels=channels, **cellpose_eval_kwargs
+        )
         return mask
 
     return _
@@ -64,30 +68,46 @@ def cellpose(
     sdata: SpatialData,
     channels: list[str] | str,
     diameter: int,
+    model_type: str = "cyto3",
     image_key: str | None = None,
     min_area: int | None = None,
     flow_threshold: float = 2,
     cellprob_threshold: float = -6,
+    cellpose_model_kwargs: dict | None = None,
+    cellpose_temp_dir: str | None = None,
 ):
     channels = channels if isinstance(channels, list) else [channels]
 
     method = cellpose_patch(
-        diameter=diameter, channels=channels, flow_threshold=flow_threshold, cellprob_threshold=cellprob_threshold
+        diameter=diameter,
+        channels=channels,
+        model_type=model_type,
+        flow_threshold=flow_threshold,
+        cellprob_threshold=cellprob_threshold,
+        cellpose_model_kwargs=cellpose_model_kwargs,
     )
 
-    cellpose_temp_dir = get_cache_dir(sdata) / SopaKeys.CELLPOSE_BOUNDARIES
+    if not cellpose_temp_dir:
+        cellpose_temp_dir = get_cache_dir(sdata) / SopaKeys.CELLPOSE_BOUNDARIES
 
     if min_area is None:
-        min_area = (diameter / 2) ** 2  # by default, about 15% of the "normal cell" area
+        min_area = (
+            diameter / 2
+        ) ** 2  # by default, about 15% of the "normal cell" area
 
-    segmentation = StainingSegmentation(sdata, method, channels, min_area=min_area, image_key=image_key)
+    segmentation = StainingSegmentation(
+        sdata, method, channels, min_area=min_area, image_key=image_key
+    )
     segmentation.write_patches_cells(cellpose_temp_dir)
 
     cells = StainingSegmentation.read_patches_cells(cellpose_temp_dir)
     cells = shapes.solve_conflicts(cells)
 
     StainingSegmentation.add_shapes(
-        sdata, cells, image_key=segmentation.image_key, shapes_key=SopaKeys.CELLPOSE_BOUNDARIES
+        sdata,
+        cells,
+        image_key=segmentation.image_key,
+        shapes_key=SopaKeys.CELLPOSE_BOUNDARIES,
     )
 
     shutil.rmtree(cellpose_temp_dir)  # clean up cache
